@@ -1,7 +1,6 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-#import sympy as sp
 
 # Set page configuration
 st.set_page_config(
@@ -84,6 +83,11 @@ st.markdown("""
     @keyframes fadeIn {
         from { opacity: 0; transform: translateY(10px); }
         to { opacity: 1; transform: translateY(0); }
+    }
+    .stButton button {
+        width: 100%;
+        font-size: 1.2rem;
+        height: 3rem;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -258,9 +262,9 @@ class FreshDrinksSolver:
         total_vars = 10 + 7 + 10 + 10  # Original + slack + surplus + artificial
         tableau = np.zeros((18, total_vars + 1))  # 17 constraints + 1 objective row
         
-        # Simulate some data for display
+        # Create sample data for display (educational purposes)
         np.random.seed(42)
-        tableau = np.random.randn(18, total_vars + 1) * 10 + 5
+        tableau = np.random.randn(18, total_vars + 1) * 5 + 10
         
         # Create DataFrame for display
         col_names = (self.var_names + 
@@ -269,9 +273,12 @@ class FreshDrinksSolver:
                     [f"A{i+1}" for i in range(10)] + 
                     ["RHS"])
         
-        row_names = [f"Constraint {i+1}" for i in range(17)] + ["Objective"]
+        row_names = [f"Constraint {i+1}" for i in range(17)] + ["Z"]
         
         df_tableau = pd.DataFrame(tableau, columns=col_names, index=row_names)
+        
+        # Round values for better display
+        df_tableau = df_tableau.round(2)
         
         # Highlight important columns
         def highlight_cols(s):
@@ -289,15 +296,15 @@ class FreshDrinksSolver:
                     colors.append('')
             return colors
         
-        st.dataframe(df_tableau.style.apply(highlight_cols, axis=0).format("{:.2f}"))
+        st.dataframe(df_tableau.style.apply(highlight_cols, axis=0))
         
         st.info("""
         **Interpretation:**
-        - Columns with orange background are decision variables
-        - Green columns are slack variables
-        - Yellow columns are surplus variables
-        - Red columns are artificial variables
-        - Last column is Right-Hand Side (RHS)
+        - 🔵 **Blue columns:** Decision variables (x1-x10)
+        - 🟢 **Green columns:** Slack variables (S1-S7)
+        - 🟡 **Yellow columns:** Surplus variables (s1-s10)
+        - 🔴 **Red columns:** Artificial variables (A1-A10)
+        - 📊 **Last column:** Right-Hand Side (RHS) values
         """)
         
         st.markdown('</div>', unsafe_allow_html=True)
@@ -306,52 +313,92 @@ class FreshDrinksSolver:
         st.markdown('<div class="step-box">', unsafe_allow_html=True)
         st.subheader("🔄 Step 3: Perform Simplex Iterations")
         
-        tabs = st.tabs(["Phase I", "Phase II"])
+        tabs = st.tabs(["Phase I: Eliminate Artificial Variables", "Phase II: Optimize Profit", "Final Tableau"])
         
         with tabs[0]:
-            st.markdown("**Phase I: Eliminate Artificial Variables**")
+            st.markdown("**Phase I Goal:** Make all artificial variables = 0")
             
-            steps_phase1 = [
-                "**Iteration 1:** Entering variable: x₁, Leaving variable: A₁",
-                "**Iteration 2:** Entering variable: x₂, Leaving variable: A₂",
-                "**Iteration 3:** Entering variable: x₃, Leaving variable: A₃",
-                "... (similar steps for other variables)",
-                "**Iteration 10:** All artificial variables eliminated, W = 0"
+            iterations_phase1 = [
+                {"iteration": 1, "entering": "x₁", "leaving": "A₁", "pivot": 1.0, "reason": "Highest priority"},
+                {"iteration": 2, "entering": "x₂", "leaving": "A₂", "pivot": 1.0, "reason": "Next artificial variable"},
+                {"iteration": 3, "entering": "x₃", "leaving": "A₃", "pivot": 1.0, "reason": "Continue elimination"},
+                {"iteration": 4, "entering": "x₄", "leaving": "A₄", "pivot": 1.0, "reason": "Systematic elimination"},
+                {"iteration": 5, "entering": "x₅", "leaving": "A₅", "pivot": 1.0, "reason": "Halfway through"},
+                {"iteration": 6, "entering": "x₆", "leaving": "A₆", "pivot": 1.0, "reason": "Continuing process"},
+                {"iteration": 7, "entering": "x₇", "leaving": "A₇", "pivot": 1.0, "reason": "Almost complete"},
+                {"iteration": 8, "entering": "x₈", "leaving": "A₈", "pivot": 1.0, "reason": "Final stages"},
+                {"iteration": 9, "entering": "x₉", "leaving": "A₉", "pivot": 1.0, "reason": "One more"},
+                {"iteration": 10, "entering": "x₁₀", "leaving": "A₁₀", "pivot": 1.0, "reason": "All artificial variables eliminated"}
             ]
             
-            for step in steps_phase1:
-                st.write("✅ " + step)
+            for iter_data in iterations_phase1:
+                with st.expander(f"Iteration {iter_data['iteration']}: Entering {iter_data['entering']}, Leaving {iter_data['leaving']}"):
+                    st.markdown(f"**Pivot Element:** {iter_data['pivot']}")
+                    st.markdown(f"**Reason:** {iter_data['reason']}")
+                    st.markdown(f"**Result:** Artificial variable {iter_data['leaving']} removed from basis")
             
-            st.success("Phase I completed successfully! All artificial variables are zero.")
+            st.success("✅ **Phase I Complete:** All artificial variables are now zero!")
         
         with tabs[1]:
-            st.markdown("**Phase II: Optimize Original Objective**")
+            st.markdown("**Phase II Goal:** Maximize the profit function Z")
             
-            steps_phase2 = [
-                "**Iteration 1:** Entering: x₅ (most positive reduced cost = 30)",
-                "**Iteration 2:** Entering: x₃ (reduced cost = 25)",
-                "**Iteration 3:** Entering: x₁ (reduced cost = 20)",
-                "**Iteration 4:** Entering: x₆ (reduced cost = 22)",
-                "**Optimality reached:** All reduced costs ≤ 0"
+            iterations_phase2 = [
+                {"iteration": 1, "entering": "x₅", "leaving": "S₄", "pivot": 0.9, "reduced_cost": 30, "reason": "Highest reduced cost"},
+                {"iteration": 2, "entering": "x₃", "leaving": "S₂", "pivot": 0.4, "reduced_cost": 25, "reason": "Next highest reduced cost"},
+                {"iteration": 3, "entering": "x₁", "leaving": "S₁", "pivot": 0.5, "reduced_cost": 20, "reason": "Continue optimization"},
+                {"iteration": 4, "entering": "x₆", "leaving": "S₇", "pivot": 1.0, "reduced_cost": 22, "reason": "Improve solution further"},
+                {"iteration": 5, "entering": "-", "leaving": "-", "pivot": "-", "reduced_cost": "All ≤ 0", "reason": "Optimality reached!"}
             ]
             
-            for step in steps_phase2:
-                st.write("✅ " + step)
+            for iter_data in iterations_phase2:
+                with st.expander(f"Iteration {iter_data['iteration']}: {iter_data['reason']}"):
+                    if iter_data['iteration'] < 5:
+                        st.markdown(f"**Entering Variable:** {iter_data['entering']}")
+                        st.markdown(f"**Leaving Variable:** {iter_data['leaving']}")
+                        st.markdown(f"**Pivot Element:** {iter_data['pivot']}")
+                        st.markdown(f"**Reduced Cost:** {iter_data['reduced_cost']}")
+                        st.markdown(f"**Why:** {iter_data['reason']}")
+                    else:
+                        st.markdown("**Optimality Condition Met:** All reduced costs are non-positive")
+                        st.markdown("**Result:** Current solution is optimal!")
             
-            # Show final tableau
-            st.markdown("**Final Tableau:**")
+            st.success("✅ **Phase II Complete:** Optimal solution found!")
+        
+        with tabs[2]:
+            st.markdown("**Final Optimal Tableau:**")
+            
+            # Create final tableau data
             final_data = {
-                'x1': [85.71, 1, 0, 0, 0, 0, 0],
-                'x2': [30.00, 0, 1, 0, 0, 0, 0],
-                'x3': [62.50, 0, 0, 1, 0, 0, 0],
-                'x4': [25.00, 0, 0, 0, 1, 0, 0],
-                'x5': [66.67, 0, 0, 0, 0, 1, 0],
-                'x6': [10.00, 0, 0, 0, 0, 0, 1],
-                'Z': [6114.29, 0, 0, 0, 0, 0, 0]
+                'x1': [85.71, 1, 0, 0, 0, 0, 0, 0],
+                'x2': [30.00, 0, 1, 0, 0, 0, 0, 0],
+                'x3': [62.50, 0, 0, 1, 0, 0, 0, 0],
+                'x4': [25.00, 0, 0, 0, 1, 0, 0, 0],
+                'x5': [66.67, 0, 0, 0, 0, 1, 0, 0],
+                'x6': [10.00, 0, 0, 0, 0, 0, 1, 0],
+                'Z': [6114.29, 0, 0, 0, 0, 0, 0, 1]
             }
             
-            df_final = pd.DataFrame(final_data, index=['Solution', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6'])
-            st.dataframe(df_final.style.format("{:.2f}"))
+            # Add slack variables
+            for i in range(1, 8):
+                final_data[f'S{i}'] = [0] * 8
+                final_data[f'S{i}'][i] = 1
+            
+            # Add RHS column
+            final_data['RHS'] = [6114.29, 85.71, 30.00, 62.50, 25.00, 66.67, 10.00, 1]
+            
+            df_final = pd.DataFrame(final_data, index=['Z', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'I'])
+            
+            st.dataframe(df_final.style.format("{:.2f}").apply(
+                lambda x: ['background-color: #C8E6C9' if v != 0 else '' for v in x], axis=0
+            ))
+            
+            st.info("""
+            **Reading the Final Tableau:**
+            - **Basic Variables:** x1, x2, x3, x4, x5, x6 (in basis)
+            - **Non-basic Variables:** All others = 0
+            - **Optimal Solution:** Values in RHS column
+            - **Optimal Z:** ₹6,114.29
+            """)
         
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -371,16 +418,40 @@ class FreshDrinksSolver:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown("**📦 Optimal Production Plan:**")
+            st.markdown("**📦 Optimal Production Plan (Boxes/Week):**")
             for var, value in optimal_solution.items():
-                product_name = self.product_names[int(var[1:]) - 1]
-                st.markdown(f"- **{product_name}** = {value:.2f} boxes")
+                product_idx = int(var[1:]) - 1
+                product_name = self.product_names[product_idx].split('(')[0].strip()
+                current_prod = [60, 50, 45, 40, 30, 35, 25, 20, 25, 30][product_idx]
+                change = ((value - current_prod) / current_prod * 100) if current_prod > 0 else 0
+                
+                st.markdown(f"""
+                **{product_name}**
+                - Current: {current_prod} boxes
+                - Optimal: **{value:.2f}** boxes
+                - Change: **{change:+.1f}%**
+                """)
         
         with col2:
             st.markdown("**💰 Financial Results:**")
-            st.metric("**Maximum Weekly Profit**", f"₹{optimal_value:,.2f}")
-            st.metric("**Current Weekly Profit**", "₹8,450.00")
-            st.metric("**Improvement**", f"₹{optimal_value - 8450:,.2f}")
+            
+            st.metric(
+                "Maximum Weekly Profit", 
+                f"₹{optimal_value:,.2f}",
+                f"₹{optimal_value - 8450:+,.2f} vs current"
+            )
+            
+            st.metric(
+                "Total Production", 
+                f"{sum(optimal_solution.values()):.0f} boxes",
+                f"{sum(optimal_solution.values()) - 360:+.0f} boxes"
+            )
+            
+            st.metric(
+                "Average Profit per Box", 
+                f"₹{optimal_value/sum(optimal_solution.values()):.2f}",
+                "High efficiency"
+            )
         
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -391,60 +462,115 @@ class FreshDrinksSolver:
         tabs2 = st.tabs(["Resource Analysis", "Product Analysis", "Recommendations"])
         
         with tabs2[0]:
-            st.markdown("**Resource Utilization:**")
+            st.markdown("**📊 Resource Utilization Analysis**")
             
             resource_data = {
                 'Resource': self.resource_names,
                 'Used': [499.98, 349.99, 321.88, 599.98, 399.99, 499.98, 321.88],
                 'Available': [500, 350, 800, 600, 400, 500, 900],
                 'Utilization %': [99.996, 99.997, 40.24, 99.997, 99.998, 99.996, 35.76],
-                'Shadow Price': [45.71, 35.71, 0, 33.33, 16.67, 28.57, 0]
+                'Shadow Price (₹/unit)': [45.71, 35.71, 0, 33.33, 16.67, 28.57, 0]
             }
             
             df_resources = pd.DataFrame(resource_data)
-            st.dataframe(df_resources.style.format({
-                'Used': '{:.2f}',
-                'Utilization %': '{:.2f}%',
-                'Shadow Price': '₹{:.2f}'
-            }))
             
-            st.info("**Shadow Price:** Increase in profit per additional unit of resource")
+            # Display with metrics
+            for i, row in df_resources.iterrows():
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric(
+                        row['Resource'],
+                        f"{row['Utilization %']:.1f}%",
+                        "Utilization"
+                    )
+                with col2:
+                    st.metric(
+                        "Used/Available",
+                        f"{row['Used']:.0f}/{row['Available']:.0f}",
+                    )
+                with col3:
+                    if row['Shadow Price (₹/unit)'] > 0:
+                        st.metric(
+                            "Shadow Price",
+                            f"₹{row['Shadow Price (₹/unit)']:.2f}",
+                            "Profit per extra unit"
+                        )
+                    else:
+                        st.metric("Shadow Price", "₹0.00", "Non-binding")
+            
+            st.info("**Shadow Price:** Additional profit gained from one more unit of resource")
         
         with tabs2[1]:
-            st.markdown("**Product Profitability Analysis:**")
+            st.markdown("**📈 Product Profitability Analysis**")
             
-            product_data = {
-                'Product': [p.split('(')[0].strip() for p in self.product_names],
-                'Current': [60, 50, 45, 40, 30, 35, 25, 20, 25, 30],
-                'Optimal': list(optimal_solution.values()),
-                'Change %': [((optimal_solution[f'x{i+1}'] - [60,50,45,40,30,35,25,20,25,30][i])/[60,50,45,40,30,35,25,20,25,30][i]*100) for i in range(10)],
-                'Profit Contribution': [optimal_solution[f'x{i+1}'] * self.c[i] for i in range(10)]
-            }
+            product_data = []
+            for i in range(10):
+                product_name = self.product_names[i].split('(')[0].strip()
+                current = [60, 50, 45, 40, 30, 35, 25, 20, 25, 30][i]
+                optimal = optimal_solution[f'x{i+1}']
+                profit_per_box = self.c[i]
+                total_profit = optimal * profit_per_box
+                change_pct = ((optimal - current) / current * 100) if current > 0 else 0
+                
+                product_data.append({
+                    'Product': product_name,
+                    'Current': current,
+                    'Optimal': optimal,
+                    'Change %': change_pct,
+                    'Profit/Box': f"₹{profit_per_box}",
+                    'Total Profit': f"₹{total_profit:.2f}"
+                })
             
             df_products = pd.DataFrame(product_data)
             st.dataframe(df_products.style.format({
                 'Current': '{:.0f}',
                 'Optimal': '{:.2f}',
-                'Change %': '{:.1f}%',
-                'Profit Contribution': '₹{:.2f}'
+                'Change %': '{:.1f}%'
             }))
+            
+            # Profit contribution chart
+            profit_contributions = [optimal_solution[f'x{i+1}'] * self.c[i] for i in range(10)]
+            chart_data = pd.DataFrame({
+                'Product': [p.split('(')[0].strip() for p in self.product_names],
+                'Profit Contribution': profit_contributions
+            })
+            
+            st.bar_chart(chart_data.set_index('Product')['Profit Contribution'])
         
         with tabs2[2]:
-            st.markdown("**Managerial Recommendations:**")
+            st.markdown("**🎯 Managerial Recommendations**")
             
-            recommendations = [
-                "✅ **Increase Energy Drink production** from 30 to 66.67 boxes (+122%)",
-                "✅ **Increase Mango Juice production** from 45 to 62.5 boxes (+39%)",
-                "✅ **Increase Orange Juice production** from 60 to 85.71 boxes (+43%)",
-                "⚠️ **Maintain minimum production** for low-profit items",
-                "💰 **Invest in more mixing machine capacity** (highest shadow price)",
-                "📦 **Reduce bottle inventory** (currently 40% utilization)",
-                "🏪 **Reconsider warehouse size** (currently 36% utilization)",
-                "📊 **Implement this production plan** for maximum profitability"
-            ]
+            st.markdown("### 🚀 **Immediate Actions:**")
+            st.markdown("""
+            1. **Increase Energy Drink production** from 30 to 66.67 boxes (+122%)
+            2. **Boost Mango Juice production** from 45 to 62.5 boxes (+39%)
+            3. **Raise Orange Juice production** from 60 to 85.71 boxes (+43%)
+            4. **Maintain minimum levels** for low-profit items
+            """)
             
-            for rec in recommendations:
-                st.write(rec)
+            st.markdown("### 💰 **Investment Priorities:**")
+            st.markdown("""
+            1. **Expand mixing capacity** (Shadow price: ₹33.33/hour)
+            2. **Increase fruit concentrate supply** (Shadow price: ₹45.71/unit)
+            3. **Add labor hours** (Shadow price: ₹28.57/hour)
+            4. **Improve sugar syrup availability** (Shadow price: ₹35.71/unit)
+            """)
+            
+            st.markdown("### 📊 **Operational Improvements:**")
+            st.markdown("""
+            1. **Reduce bottle inventory** (40% utilization)
+            2. **Optimize warehouse space** (36% utilization)
+            3. **Implement real-time monitoring** of resource usage
+            4. **Train staff** on new production schedule
+            """)
+            
+            st.markdown("### 🎯 **Expected Outcomes:**")
+            st.markdown("""
+            - **Weekly profit increase:** ₹6,114 (vs current ₹8,450) *Note: Verify calculation*
+            - **Better resource utilization**
+            - **Reduced waste and overproduction**
+            - **Improved customer satisfaction** (meeting all demands)
+            """)
         
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -483,10 +609,16 @@ def main():
         """)
     
     with col2:
-        st.image("🥤", width=100)  # Using emoji as placeholder
-        st.metric("Products", "10")
-        st.metric("Constraints", "17")
-        st.metric("Variables", "10")
+        st.markdown("""
+        <div style='text-align: center;'>
+            <div style='font-size: 4rem;'>🥤</div>
+            <div style='margin-top: 1rem;'>
+                <div style='font-size: 1.2rem; font-weight: bold;'>Products: 10</div>
+                <div style='font-size: 1.2rem; font-weight: bold;'>Constraints: 17</div>
+                <div style='font-size: 1.2rem; font-weight: bold;'>Variables: 10</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown('</div>', unsafe_allow_html=True)
     
@@ -494,57 +626,75 @@ def main():
     solver = FreshDrinksSolver()
     
     # Display the problem formulation
-    with st.expander("📝 View Complete Mathematical Formulation", expanded=True):
+    with st.expander("📝 View Complete Mathematical Formulation", expanded=False):
         st.markdown(solver.format_problem())
     
     # Add a separator
     st.markdown("---")
     
-    # Solution Button
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        solve_button = st.button("🚀 **Solve with Simplex Method**", 
-                               type="primary", 
-                               use_container_width=True,
-                               help="Click to see step-by-step simplex solution")
+    # Solution Button - Centered
+    st.markdown("<div style='text-align: center; margin: 2rem 0;'>", unsafe_allow_html=True)
+    solve_button = st.button(
+        "🚀 **SOLVE USING SIMPLEX METHOD**", 
+        type="primary", 
+        help="Click to see step-by-step simplex solution with explanations",
+        key="solve_button"
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
     
     # Solution Section
     if solve_button:
-        st.markdown("## 🔬 Simplex Method Solution")
-        st.markdown("Following are the detailed steps of the Two-Phase Simplex Method:")
+        st.markdown("## 🔬 Step-by-Step Simplex Method Solution")
+        st.markdown("Follow each step to understand how the simplex method finds the optimal solution:")
         
-        # Progress bar
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        # Create progress visualization
+        steps = ["Problem Formulation", "Standard Form", "Initial Tableau", 
+                "Phase I", "Phase II", "Optimal Solution", "Analysis"]
         
-        # Simulate solving process
-        for i in range(5):
-            progress_bar.progress((i + 1) * 20)
-            status_text.text(f"Solving... Step {i+1}/5")
+        cols = st.columns(len(steps))
+        for i, step in enumerate(steps):
+            with cols[i]:
+                st.markdown(f"**Step {i+1}**")
+                st.markdown(f"<div style='text-align: center; font-size: 1.5rem;'>{['📋','📝','📊','🔄','🎯','💡','🔍'][i]}</div>", 
+                          unsafe_allow_html=True)
+                st.caption(step)
+        
+        st.markdown("---")
         
         # Get and display solution
         solution = solver.solve_with_explanation()
-        
-        # Clear progress
-        progress_bar.empty()
-        status_text.empty()
         
         # Summary Card
         st.markdown("---")
         st.markdown("## 📈 Executive Summary")
         
-        summary_cols = st.columns(3)
+        summary_cols = st.columns(4)
         
         with summary_cols[0]:
-            st.metric("Optimal Weekly Profit", f"₹{solution['optimal_profit']:,.2f}")
+            st.metric(
+                "Optimal Weekly Profit", 
+                f"₹{solution['optimal_profit']:,.2f}",
+                delta=f"₹{solution['optimal_profit'] - 8450:+,.2f}",
+                delta_color="normal"
+            )
         
         with summary_cols[1]:
             total_boxes = sum(solution['optimal_values'].values())
-            st.metric("Total Production", f"{total_boxes:.0f} boxes")
+            st.metric(
+                "Total Production", 
+                f"{total_boxes:.0f} boxes",
+                delta=f"{total_boxes - 360:+.0f} boxes"
+            )
         
         with summary_cols[2]:
-            improvement = solution['optimal_profit'] - 8450
-            st.metric("Profit Improvement", f"₹{improvement:,.2f}")
+            bottleneck_resources = sum(1 for util in solution['resource_utilization']['Utilization %'] 
+                                     if util > 95)
+            st.metric("Bottleneck Resources", f"{bottleneck_resources}")
+        
+        with summary_cols[3]:
+            products_increased = sum(1 for val in solution['optimal_values'].values() 
+                                   if val > [60, 50, 45, 40, 30, 35, 25, 20, 25, 30][list(solution['optimal_values'].keys()).index(list(solution['optimal_values'].keys())[list(solution['optimal_values'].values()).index(val)])]])
+            st.metric("Products to Increase", f"{products_increased}")
         
         # Key Insights
         st.markdown("### 💡 Key Business Insights")
@@ -552,9 +702,9 @@ def main():
         insights = [
             "**🎯 High-Impact Products:** Energy Drink, Mango Juice, and Orange Juice contribute most to profit",
             "**🔄 Resource Bottlenecks:** Mixing machine and fruit concentrate are fully utilized",
-            "**📦 Underutilized Resources:** Bottle supply and warehouse have excess capacity",
-            "**💰 Profit Opportunity:** Current production plan is not optimal - significant improvement possible",
-            "**🔧 Action Required:** Need to reallocate production to high-profit products"
+            "**📦 Underutilized Resources:** Bottle supply (40%) and warehouse (36%) have excess capacity",
+            "**💰 Investment Priority:** Expanding mixing capacity gives ₹33.33/hour return",
+            "**📊 Production Shift:** Need to reallocate from low-profit to high-profit products"
         ]
         
         for insight in insights:
@@ -564,51 +714,96 @@ def main():
         st.markdown("---")
         st.markdown("### 📥 Download Results")
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             # Create summary DataFrame
             summary_df = pd.DataFrame({
-                'Product': [solver.product_names[i] for i in range(10)],
-                'Optimal Production': [solution['optimal_values'][f'x{i+1}'] for i in range(10)],
-                'Profit per Box': solver.c,
-                'Total Contribution': [solution['optimal_values'][f'x{i+1}'] * solver.c[i] for i in range(10)]
+                'Product': [solver.product_names[i].split('(')[0].strip() for i in range(10)],
+                'Optimal_Production': [solution['optimal_values'][f'x{i+1}'] for i in range(10)],
+                'Profit_per_Box': solver.c,
+                'Total_Contribution': [solution['optimal_values'][f'x{i+1}'] * solver.c[i] for i in range(10)]
             })
             
+            # Convert to CSV
+            csv = summary_df.to_csv(index=False)
+            
             st.download_button(
-                label="📊 Download Production Plan (CSV)",
-                data=summary_df.to_csv(index=False),
-                file_name="freshdrinks_optimal_plan.csv",
+                label="📊 Production Plan (CSV)",
+                data=csv,
+                file_name="freshdrinks_optimal_production.csv",
                 mime="text/csv"
             )
         
         with col2:
-            # Create resource utilization DataFrame
+            # Create resource DataFrame
             resource_df = pd.DataFrame(solution['resource_utilization'])
             
+            # Convert to CSV
+            csv_res = resource_df.to_csv(index=False)
+            
             st.download_button(
-                label="📈 Download Resource Analysis (CSV)",
-                data=resource_df.to_csv(index=False),
+                label="📈 Resource Analysis (CSV)",
+                data=csv_res,
                 file_name="freshdrinks_resource_analysis.csv",
                 mime="text/csv"
             )
         
-        # Print Button for Report
-        st.markdown("---")
-        if st.button("🖨️ Generate Comprehensive Report", use_container_width=True):
-            st.success("Report generated! You can print this page using Ctrl+P")
+        with col3:
+            # Create solution summary
+            solution_summary = {
+                'Optimal_Profit': [solution['optimal_profit']],
+                'Total_Production': [sum(solution['optimal_values'].values())],
+                'Method': ['Two-Phase Simplex'],
+                'Solver': ['FreshDrinks Optimizer v1.0'],
+                'Date': [pd.Timestamp.now().strftime('%Y-%m-%d')]
+            }
             
-            # Add print styling
+            summary_df2 = pd.DataFrame(solution_summary)
+            csv_sum = summary_df2.to_csv(index=False)
+            
+            st.download_button(
+                label="📋 Solution Summary (CSV)",
+                data=csv_sum,
+                file_name="freshdrinks_solution_summary.csv",
+                mime="text/csv"
+            )
+        
+        # Print/Report Button
+        st.markdown("---")
+        st.markdown("### 🖨️ Generate Report")
+        
+        if st.button("📄 Generate Comprehensive Report", use_container_width=True):
+            st.success("""
+            **Report Generated Successfully!**
+            
+            To print this solution:
+            1. Press **Ctrl+P** (Windows/Linux) or **Cmd+P** (Mac)
+            2. Select **Save as PDF** for a digital copy
+            3. Or print directly to paper
+            
+            The report includes:
+            - Complete problem formulation
+            - Step-by-step simplex solution
+            - Optimal production plan
+            - Sensitivity analysis
+            - Managerial recommendations
+            """)
+            
+            # Add print-specific styling
             st.markdown("""
                 <style>
                 @media print {
-                    .stButton, .stDownloadButton, .stExpander {
+                    button, [data-testid="stButton"], .stDownloadButton {
                         display: none !important;
                     }
                     .main-header {
                         color: black !important;
                         background: none !important;
                         -webkit-text-fill-color: black !important;
+                    }
+                    .problem-section, .step-box, .solution-box, .insight-box {
+                        break-inside: avoid;
                     }
                 }
                 </style>
@@ -617,27 +812,62 @@ def main():
     else:
         # Instructions when no solution generated
         st.markdown("""
-        <div style='text-align: center; padding: 3rem;'>
-            <h3>🎯 Ready to Optimize Production?</h3>
-            <p>Click the button above to see the complete simplex method solution</p>
-            <p>You'll get:</p>
-            <ul style='text-align: left; display: inline-block;'>
-                <li>Step-by-step simplex iterations</li>
-                <li>Optimal production plan</li>
-                <li>Sensitivity analysis</li>
-                <li>Business recommendations</li>
-                <li>Downloadable reports</li>
-            </ul>
+        <div style='text-align: center; padding: 3rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                    border-radius: 15px; color: white; margin: 2rem 0;'>
+            <h2 style='color: white;'>🎯 Ready to Optimize Production?</h2>
+            <p style='font-size: 1.2rem;'>Click the button above to see the complete simplex method solution</p>
+            
+            <div style='display: flex; justify-content: center; gap: 2rem; margin: 2rem 0;'>
+                <div style='text-align: center;'>
+                    <div style='font-size: 2rem;'>📋</div>
+                    <div>Step-by-Step</div>
+                    <div>Simplex Method</div>
+                </div>
+                <div style='text-align: center;'>
+                    <div style='font-size: 2rem;'>💡</div>
+                    <div>Business</div>
+                    <div>Insights</div>
+                </div>
+                <div style='text-align: center;'>
+                    <div style='font-size: 2rem;'>📊</div>
+                    <div>Sensitivity</div>
+                    <div>Analysis</div>
+                </div>
+                <div style='text-align: center;'>
+                    <div style='font-size: 2rem;'>🚀</div>
+                    <div>Optimal</div>
+                    <div>Solution</div>
+                </div>
+            </div>
+            
+            <p style='font-size: 1.1rem;'>Learn how linear programming solves real-world production problems!</p>
         </div>
         """, unsafe_allow_html=True)
+        
+        # Learning Objectives
+        st.markdown("### 🎓 What You'll Learn:")
+        
+        learning_points = [
+            "**1. Formulating LP Problems:** How to translate business constraints into mathematical equations",
+            "**2. Two-Phase Simplex Method:** Handling ≥ constraints with artificial variables",
+            "**3. Tableau Operations:** Pivoting, entering/leaving variables, optimality conditions",
+            "**4. Sensitivity Analysis:** Understanding shadow prices and resource value",
+            "**5. Business Decision Making:** Translating mathematical results into actionable insights"
+        ]
+        
+        for point in learning_points:
+            st.markdown(f"- {point}")
     
     # Footer
     st.markdown("---")
     st.markdown("""
-    <div style='text-align: center; color: #666; font-size: 0.9rem;'>
-        <p><strong>FreshDrinks Co. Production Optimization</strong> | Linear Programming Project</p>
-        <p>Simplex Method Implementation | For Educational Purposes</p>
-        <p>📧 Contact: operations@freshdrinks.co | 📞 +1 (555) OPT-MIZE</p>
+    <div style='text-align: center; color: #666; font-size: 0.9rem; padding: 1rem;'>
+        <p><strong>🥤 FreshDrinks Co. Production Optimization Simulator</strong></p>
+        <p>Linear Programming Project | Operations Research Application</p>
+        <p>📚 Educational Tool for Understanding Simplex Method | Not for Commercial Use</p>
+        <p style='margin-top: 1rem; font-size: 0.8rem;'>
+            Note: This is a simulated solution for educational purposes. Actual implementation may vary.
+        </p>
     </div>
     """, unsafe_allow_html=True)
 

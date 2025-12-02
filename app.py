@@ -181,22 +181,33 @@ class FreshDrinksSimplexSolver:
         
         # Initialize num_constraints
         self.num_constraints = 0
+        
+        # Solution status
+        self.is_optimal = False
+        self.is_feasible = True
+        self.message = ""
     
     def check_feasibility(self):
         """Check if the problem is feasible with given constraints"""
         # Check minimum production storage requirement
         min_storage_needed = sum(self.min_production)
         if min_storage_needed > self.storage_capacity:
-            return False, f"Minimum production requires {min_storage_needed} boxes, but storage capacity is only {self.storage_capacity}"
+            self.is_feasible = False
+            self.message = f"Minimum production requires {min_storage_needed} boxes, but storage capacity is only {self.storage_capacity}"
+            return False
         
         # Check resource requirements for minimum production
         for i in range(6):
             min_resource_needed = sum(self.min_production[j] * self.resource_consumption[j, i]
                                      for j in range(self.num_products))
             if min_resource_needed > self.resource_limits[i]:
-                return False, f"{self.resource_names[i]} requires {min_resource_needed:.1f}, but only {self.resource_limits[i]} available"
+                self.is_feasible = False
+                self.message = f"{self.resource_names[i]} requires {min_resource_needed:.1f}, but only {self.resource_limits[i]} available"
+                return False
         
-        return True, "Problem is feasible"
+        self.is_feasible = True
+        self.message = "Problem is feasible"
+        return True
     
     def build_problem(self):
         """Build the FreshDrinks Co. LP problem"""
@@ -275,22 +286,29 @@ class FreshDrinksSimplexSolver:
             if abs(self.tableau[row_idx, -1]) > 1e-6:
                 self.tableau[-1] -= self.M * self.tableau[row_idx]
         
+        # Reset iteration history
+        self.iterations_history = []
+        self.pivot_history = []
+        self.is_optimal = False
+        
         # Save initial tableau
-        self.save_iteration(0)
+        self.save_iteration(0, "Initial Tableau")
     
-    def save_iteration(self, iteration):
+    def save_iteration(self, iteration, description=""):
         """Save current tableau state for display"""
         self.iterations_history.append({
             'iteration': iteration,
             'tableau': self.tableau.copy(),
             'basic_vars': self.basic_vars.copy(),
-            'var_names': self.var_names.copy()
+            'var_names': self.var_names.copy(),
+            'description': description,
+            'objective_value': -self.tableau[-1, -1]
         })
     
-    def find_pivot_column(self):
-        """Find entering variable (most negative coefficient in objective row)"""
-        if self.tableau is None or len(self.tableau[-1]) == 0:
-            return -1
+    def check_optimality(self):
+        """Check if current solution is optimal"""
+        if self.tableau is None:
+            return False
         
         obj_row = self.tableau[-1, :-1]
         
@@ -302,16 +320,47 @@ class FreshDrinksSimplexSolver:
         
         min_val = np.min(obj_row)
         
+        # If all reduced costs are non-negative, we're optimal
         if min_val >= -1e-10:
-            return -1
+            # Check if any artificial variables are still in basis with non-zero value
+            artificial_in_basis = False
+            for i, basic_var in enumerate(self.basic_vars):
+                if basic_var.startswith('A') and i < len(self.tableau) and abs(self.tableau[i, -1]) > 1e-6:
+                    artificial_in_basis = True
+                    break
+            
+            if artificial_in_basis:
+                self.message = "No feasible solution found - artificial variables remain in basis"
+                return False
+            
+            self.is_optimal = True
+            self.message = "Optimal solution reached"
+            return True
         
-        return np.argmin(obj_row)
+        return False
     
-    def find_pivot_row(self, pivot_col):
-        """Find leaving variable using minimum ratio test"""
-        if pivot_col < 0 or pivot_col >= self.tableau.shape[1]:
-            return -1
+    def perform_iteration(self, iteration):
+        """Perform one simplex iteration"""
+        if self.is_optimal:
+            return False, "Already at optimal solution"
         
+        # Find entering variable (most negative reduced cost)
+        obj_row = self.tableau[-1, :-1]
+        
+        # Skip artificial variables
+        artificial_start = self.num_products + 7 + self.num_products
+        for i in range(artificial_start, len(obj_row)):
+            if abs(obj_row[i]) > self.M/2:
+                obj_row[i] = float('inf')
+        
+        min_val = np.min(obj_row)
+        pivot_col = np.argmin(obj_row)
+        
+        if min_val >= -1e-10:
+            self.check_optimality()
+            return False, "Optimal solution reached"
+        
+        # Find leaving variable using minimum ratio test
         ratios = []
         for i in range(self.num_constraints):
             if self.tableau[i, pivot_col] > 1e-10:
@@ -324,36 +373,37 @@ class FreshDrinksSimplexSolver:
                 ratios.append(float('inf'))
         
         if all(r == float('inf') for r in ratios):
-            return -1
+            return False, "Problem is unbounded"
         
         min_ratio = float('inf')
-        min_idx = -1
+        pivot_row = -1
         for i, ratio in enumerate(ratios):
             if 0 <= ratio < min_ratio:
                 min_ratio = ratio
-                min_idx = i
+                pivot_row = i
         
-        return min_idx
-    
-    def pivot(self, pivot_row, pivot_col, iteration):
-        """Perform pivot operation"""
-        if pivot_row < 0 or pivot_col < 0:
-            return False
+        if pivot_row == -1:
+            return False, "No valid pivot row found"
         
-        pivot_element = self.tableau[pivot_row, pivot_col]
-        
-        if abs(pivot_element) < 1e-10:
-            return False
-        
-        # Store pivot info
-        self.pivot_history.append({
+        # Store pivot info before performing pivot
+        pivot_info = {
             'iteration': iteration,
             'entering': self.var_names[pivot_col],
             'leaving': self.basic_vars[pivot_row],
-            'pivot_element': pivot_element,
+            'pivot_element': self.tableau[pivot_row, pivot_col],
             'pivot_row': pivot_row,
-            'pivot_col': pivot_col
-        })
+            'pivot_col': pivot_col,
+            'ratio': min_ratio
+        }
+        
+        # Perform pivot operation
+        pivot_element = self.tableau[pivot_row, pivot_col]
+        
+        if abs(pivot_element) < 1e-10:
+            return False, "Pivot element is zero"
+        
+        # Save state before pivot for display
+        self.save_iteration(iteration, f"Before pivot: {pivot_info['entering']} enters, {pivot_info['leaving']} leaves")
         
         # Normalize pivot row
         self.tableau[pivot_row] = self.tableau[pivot_row] / pivot_element
@@ -369,10 +419,37 @@ class FreshDrinksSimplexSolver:
         if pivot_row < len(self.basic_vars):
             self.basic_vars[pivot_row] = self.var_names[pivot_col]
         
-        # Save iteration after pivot
-        self.save_iteration(iteration)
+        # Add pivot info to history
+        self.pivot_history.append(pivot_info)
         
-        return True
+        # Check optimality after pivot
+        is_optimal = self.check_optimality()
+        
+        # Save state after pivot
+        if is_optimal:
+            description = f"Optimal solution reached after pivot"
+        else:
+            description = f"After pivot: {pivot_info['entering']} in basis, {pivot_info['leaving']} out"
+        
+        self.save_iteration(iteration + 0.5, description)
+        
+        return True, f"Iteration {iteration} complete: {pivot_info['entering']} enters, {pivot_info['leaving']} leaves"
+    
+    def solve_complete(self):
+        """Solve the complete problem automatically"""
+        self.build_problem()
+        
+        max_iterations = 50
+        for iteration in range(1, max_iterations + 1):
+            success, message = self.perform_iteration(iteration)
+            if not success:
+                break
+        
+        # Extract solution if optimal
+        if self.is_optimal:
+            self.extract_solution()
+        
+        return self.is_optimal, self.message
     
     def get_tableau_html(self, iteration_idx):
         """Generate HTML for tableau display"""
@@ -383,29 +460,34 @@ class FreshDrinksSimplexSolver:
         tableau = iteration_data['tableau']
         basic_vars = iteration_data['basic_vars']
         var_names = iteration_data['var_names']
+        description = iteration_data['description']
         
         # Get pivot info for this iteration if available
         pivot_row = -1
         pivot_col = -1
-        if iteration_idx > 0:
-            for pivot_info in self.pivot_history:
-                if pivot_info['iteration'] == iteration_idx:
-                    pivot_row = pivot_info['pivot_row']
-                    pivot_col = pivot_info['pivot_col']
-                    break
+        for pivot_info in self.pivot_history:
+            if pivot_info['iteration'] == int(iteration_data['iteration']):
+                pivot_row = pivot_info['pivot_row']
+                pivot_col = pivot_info['pivot_col']
+                break
         
-        html = f'<h4>Iteration {iteration_idx}</h4>'
+        html = f'<h4>{description}</h4>'
+        
+        # Show iteration number and objective value
+        html += f'<p><strong>Iteration:</strong> {iteration_data["iteration"]} | '
+        html += f'<strong>Objective Value (Z):</strong> {iteration_data["objective_value"]:.2f}</p>'
         
         # Show pivot info if available
         if pivot_row != -1:
-            pivot_info = next((p for p in self.pivot_history if p['iteration'] == iteration_idx), None)
+            pivot_info = next((p for p in self.pivot_history if p['iteration'] == int(iteration_data['iteration'])), None)
             if pivot_info:
                 html += f"""
                 <div style="background-color: #FFF3E0; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
                     <strong>Pivot Operation:</strong> 
                     Entering: <span class="decision-var">{pivot_info['entering']}</span> | 
                     Leaving: <span class="basic-var">{pivot_info['leaving']}</span> | 
-                    Pivot Element: {pivot_info['pivot_element']:.4f}
+                    Pivot Element: {pivot_info['pivot_element']:.4f} |
+                    Ratio: {pivot_info['ratio']:.2f}
                 </div>
                 """
         
@@ -457,67 +539,11 @@ class FreshDrinksSimplexSolver:
         
         html += '</table>'
         
-        # Show objective value
-        obj_val = -tableau[-1, -1]
-        html += f'<div style="margin-top: 10px;"><strong>Current Z = {obj_val:.2f}</strong></div>'
-        
-        # Check optimality
-        if iteration_idx > 0:
-            obj_row = tableau[-1, :-1]
-            min_coeff = np.min(obj_row)
-            if min_coeff >= -1e-6:
-                html += '<div style="color: green; font-weight: bold;">✓ OPTIMAL SOLUTION REACHED</div>'
-            else:
-                entering_var_idx = np.argmin(obj_row)
-                entering_var = var_names[entering_var_idx]
-                html += f'<div>Most negative reduced cost: {min_coeff:.2f} ({entering_var})</div>'
+        # Show optimality status
+        if "Optimal" in description:
+            html += '<div style="color: green; font-weight: bold; margin-top: 10px;">✓ OPTIMAL SOLUTION REACHED</div>'
         
         return html
-    
-    def solve_interactive(self):
-        """Solve the problem step by step for interactive display"""
-        self.iterations_history = []
-        self.pivot_history = []
-        
-        # Build problem and save initial tableau
-        self.build_problem()
-        
-        iteration = 0
-        max_iterations = 50
-        
-        while iteration < max_iterations:
-            iteration += 1
-            
-            # Find entering variable
-            pivot_col = self.find_pivot_column()
-            
-            if pivot_col == -1:
-                # Check artificial variables
-                artificial_in_basis = False
-                for i, basic_var in enumerate(self.basic_vars):
-                    if basic_var.startswith('A') and i < len(self.tableau) and abs(self.tableau[i, -1]) > 1e-6:
-                        artificial_in_basis = True
-                        break
-                
-                if artificial_in_basis:
-                    return False, "Infeasible problem - artificial variables remain in basis"
-                
-                # Optimal solution found
-                self.extract_solution()
-                return True, f"Optimal solution found in {iteration-1} iterations"
-            
-            # Find leaving variable
-            pivot_row = self.find_pivot_row(pivot_col)
-            
-            if pivot_row == -1:
-                return False, "Unbounded solution"
-            
-            # Perform pivot
-            success = self.pivot(pivot_row, pivot_col, iteration)
-            if not success:
-                return False, "Pivot operation failed"
-        
-        return False, f"Maximum iterations ({max_iterations}) reached"
     
     def extract_solution(self):
         """Extract the optimal solution"""
@@ -600,12 +626,13 @@ def main():
     # Initialize session state
     if 'solver' not in st.session_state:
         st.session_state.solver = FreshDrinksSimplexSolver()
+        st.session_state.solver.build_problem()
+    
     if 'current_iteration' not in st.session_state:
         st.session_state.current_iteration = 0
-    if 'solution_status' not in st.session_state:
-        st.session_state.solution_status = None
-    if 'show_all_iterations' not in st.session_state:
-        st.session_state.show_all_iterations = False
+    
+    if 'total_iterations' not in st.session_state:
+        st.session_state.total_iterations = 1
     
     solver = st.session_state.solver
     
@@ -646,39 +673,6 @@ def main():
     
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Problem Formulation
-    with st.expander("📝 View Complete Mathematical Formulation", expanded=False):
-        st.markdown("""
-        ### **Objective Function (Maximize):**
-        $$Z = 20x_1 + 18x_2 + 25x_3 + 15x_4 + 30x_5 + 22x_6 + 17x_7 + 10x_8 + 12x_9 + 16x_{10}$$
-        
-        ### **Resource Constraints (≤):**
-        1. **Fruit Concentrate:** $0.5x_1 + 0.4x_2 + 0.6x_3 + 0.3x_4 + 0.7x_5 + 0.5x_6 + 0.4x_7 + 0.2x_8 + 0.3x_9 + 0.4x_{10} ≤ 500$
-        2. **Sugar Syrup:** $0.3x_1 + 0.2x_2 + 0.4x_3 + 0.3x_4 + 0.5x_5 + 0.4x_6 + 0.3x_7 + 0.1x_8 + 0.2x_9 + 0.3x_{10} ≤ 350$
-        3. **Bottles:** $x_1 + x_2 + x_3 + x_4 + x_5 + x_6 + x_7 + x_8 + x_9 + x_{10} ≤ 800$
-        4. **Mixing Hours:** $0.6x_1 + 0.5x_2 + 0.7x_3 + 0.4x_4 + 0.9x_5 + 0.6x_6 + 0.5x_7 + 0.3x_8 + 0.4x_9 + 0.5x_{10} ≤ 600$
-        5. **Labeling Hours:** $0.3x_1 + 0.2x_2 + 0.4x_3 + 0.3x_4 + 0.6x_5 + 0.4x_6 + 0.2x_7 + 0.1x_8 + 0.1x_9 + 0.2x_{10} ≤ 400$
-        6. **Labor Hours:** $0.4x_1 + 0.3x_2 + 0.5x_3 + 0.2x_4 + 0.6x_5 + 0.4x_6 + 0.3x_7 + 0.2x_8 + 0.3x_9 + 0.3x_{10} ≤ 500$
-        
-        ### **Storage Constraint (≤):**
-        $$x_1 + x_2 + x_3 + x_4 + x_5 + x_6 + x_7 + x_8 + x_9 + x_{10} ≤ 900$$
-        
-        ### **Minimum Production Requirements (≥):**
-        - $x_1 ≥ 40$ (Orange Juice)
-        - $x_2 ≥ 30$ (Apple Juice)
-        - $x_3 ≥ 20$ (Mango Juice)
-        - $x_4 ≥ 25$ (Lemon Drink)
-        - $x_5 ≥ 15$ (Energy Drink)
-        - $x_6 ≥ 10$ (Sports Drink)
-        - $x_7 ≥ 12$ (Vitamin Water)
-        - $x_8 ≥ 8$ (Sparkling Water)
-        - $x_9 ≥ 10$ (Iced Tea)
-        - $x_{10} ≥ 12$ (Cold Coffee)
-        
-        ### **Non-negativity:**
-        $$x_i ≥ 0 \\quad \\text{for all } i = 1,2,...,10$$
-        """)
-    
     # Control Buttons
     st.markdown("---")
     st.markdown("### 🎮 Simplex Method Controls")
@@ -688,43 +682,44 @@ def main():
     with col1:
         if st.button("🚀 Run Complete Solution", use_container_width=True):
             with st.spinner("Solving with Simplex Method..."):
-                # Reset solver
-                solver = FreshDrinksSimplexSolver()
-                st.session_state.solver = solver
-                st.session_state.current_iteration = 0
-                
-                # Check feasibility
-                feasible, message = solver.check_feasibility()
-                if not feasible:
-                    st.error(f"❌ {message}")
+                # Solve the complete problem
+                success, message = solver.solve_complete()
+                if success:
+                    st.success(f"✅ {message}")
                 else:
-                    # Solve the problem
-                    success, message = solver.solve_interactive()
-                    if success:
-                        st.session_state.solution_status = "optimal"
-                        st.success(f"✅ {message}")
-                    else:
-                        st.session_state.solution_status = "failed"
-                        st.error(f"❌ {message}")
-            
-            st.rerun()
+                    st.error(f"❌ {message}")
+                
+                # Update session state
+                st.session_state.total_iterations = len(solver.iterations_history)
+                st.session_state.current_iteration = st.session_state.total_iterations - 1
+                st.rerun()
     
     with col2:
-        if st.button("🔧 Build Initial Tableau", use_container_width=True):
-            solver = FreshDrinksSimplexSolver()
-            st.session_state.solver = solver
+        if st.button("🔧 Build/Rebuild Initial Tableau", use_container_width=True):
             solver.build_problem()
             st.session_state.current_iteration = 0
-            st.session_state.solution_status = "initial"
+            st.session_state.total_iterations = 1
             st.success("✅ Initial tableau built successfully!")
             st.rerun()
     
     with col3:
-        if st.button("⏭️ Next Iteration", use_container_width=True):
-            if hasattr(solver, 'iterations_history') and len(solver.iterations_history) > 0:
-                if st.session_state.current_iteration < len(solver.iterations_history) - 1:
-                    st.session_state.current_iteration += 1
-                    st.rerun()
+        if st.button("⏭️ Perform Next Iteration", use_container_width=True):
+            if not solver.is_optimal:
+                # Perform next iteration
+                iteration_num = len(solver.pivot_history) + 1
+                success, message = solver.perform_iteration(iteration_num)
+                
+                if success:
+                    st.success(f"✅ {message}")
+                else:
+                    st.warning(f"⚠️ {message}")
+                
+                # Update session state
+                st.session_state.total_iterations = len(solver.iterations_history)
+                st.session_state.current_iteration = st.session_state.total_iterations - 1
+                st.rerun()
+            else:
+                st.info("Already at optimal solution!")
     
     with col4:
         if st.button("⏮️ Previous Iteration", use_container_width=True):
@@ -732,9 +727,14 @@ def main():
                 st.session_state.current_iteration -= 1
                 st.rerun()
     
-    # Display current iteration
-    if hasattr(solver, 'iterations_history') and len(solver.iterations_history) > 0:
-        st.markdown(f"**Current Iteration:** {st.session_state.current_iteration} / {len(solver.iterations_history)-1}")
+    # Display current iteration info
+    st.markdown(f"**Current Iteration:** {st.session_state.current_iteration} / {st.session_state.total_iterations - 1}")
+    
+    # Status information
+    if hasattr(solver, 'is_optimal') and solver.is_optimal:
+        st.success("✅ **Optimal Solution Reached!**")
+    elif hasattr(solver, 'message') and solver.message:
+        st.info(f"**Status:** {solver.message}")
     
     # Tableau Display
     if hasattr(solver, 'iterations_history') and len(solver.iterations_history) > 0:
@@ -746,65 +746,91 @@ def main():
         
         with tab1:
             st.markdown('<div class="tableau-box">', unsafe_allow_html=True)
-            tableau_html = solver.get_tableau_html(st.session_state.current_iteration)
-            st.markdown(tableau_html, unsafe_allow_html=True)
-            
-            # Show iteration navigation
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col1:
-                if st.button("◀ Previous", disabled=st.session_state.current_iteration == 0):
-                    st.session_state.current_iteration = max(0, st.session_state.current_iteration - 1)
-                    st.rerun()
-            
-            with col2:
-                st.markdown(f"**Iteration {st.session_state.current_iteration}**")
-            
-            with col3:
-                if st.button("Next ▶", disabled=st.session_state.current_iteration >= len(solver.iterations_history)-1):
-                    st.session_state.current_iteration = min(len(solver.iterations_history)-1, 
-                                                           st.session_state.current_iteration + 1)
-                    st.rerun()
-            
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with tab2:
-            st.markdown("### All Iterations")
             
             # Show iteration selector
-            selected_iteration = st.selectbox(
-                "Select Iteration to View:",
-                options=list(range(len(solver.iterations_history))),
-                format_func=lambda x: f"Iteration {x}"
+            selected_iteration = st.slider(
+                "Select iteration to view:",
+                min_value=0,
+                max_value=len(solver.iterations_history)-1,
+                value=st.session_state.current_iteration,
+                key="iteration_slider"
             )
             
             if selected_iteration != st.session_state.current_iteration:
                 st.session_state.current_iteration = selected_iteration
                 st.rerun()
             
+            # Display selected tableau
+            tableau_html = solver.get_tableau_html(st.session_state.current_iteration)
+            st.markdown(tableau_html, unsafe_allow_html=True)
+            
+            # Navigation buttons
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col1:
+                if st.button("◀ Previous", key="prev_tableau"):
+                    if st.session_state.current_iteration > 0:
+                        st.session_state.current_iteration -= 1
+                        st.rerun()
+            
+            with col2:
+                st.markdown(f"**Viewing: Iteration {st.session_state.current_iteration}**")
+            
+            with col3:
+                if st.button("Next ▶", key="next_tableau"):
+                    if st.session_state.current_iteration < len(solver.iterations_history) - 1:
+                        st.session_state.current_iteration += 1
+                        st.rerun()
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with tab2:
+            st.markdown("### All Iterations")
+            
             # Show all iterations in expanders
             for i in range(len(solver.iterations_history)):
-                with st.expander(f"Iteration {i}", expanded=(i == selected_iteration)):
+                iteration_data = solver.iterations_history[i]
+                with st.expander(f"Iteration {iteration_data['iteration']}: {iteration_data['description']}", 
+                               expanded=(i == st.session_state.current_iteration)):
                     tableau_html = solver.get_tableau_html(i)
                     st.markdown(tableau_html, unsafe_allow_html=True)
+                    
+                    # Button to view this iteration
+                    if st.button(f"View This Iteration", key=f"view_iter_{i}"):
+                        st.session_state.current_iteration = i
+                        st.rerun()
         
         with tab3:
             st.markdown("### Pivot Operation History")
             
             if hasattr(solver, 'pivot_history') and solver.pivot_history:
-                pivot_df = pd.DataFrame(solver.pivot_history)
+                # Create pivot history table
+                pivot_data = []
+                for pivot in solver.pivot_history:
+                    pivot_data.append({
+                        'Iteration': pivot['iteration'],
+                        'Entering Variable': pivot['entering'],
+                        'Leaving Variable': pivot['leaving'],
+                        'Pivot Element': f"{pivot['pivot_element']:.4f}",
+                        'Ratio': f"{pivot['ratio']:.2f}"
+                    })
+                
+                pivot_df = pd.DataFrame(pivot_data)
                 st.dataframe(pivot_df, use_container_width=True)
                 
                 st.markdown("**Pivot Operations Summary:**")
                 for pivot in solver.pivot_history:
                     st.markdown(f"""
-                    - **Iteration {pivot['iteration']}:** {pivot['entering']} enters, {pivot['leaving']} leaves
-                      (Pivot: {pivot['pivot_element']:.4f})
+                    - **Iteration {pivot['iteration']}:** 
+                      *Entering:* {pivot['entering']}, 
+                      *Leaving:* {pivot['leaving']}, 
+                      *Pivot Element:* {pivot['pivot_element']:.4f}, 
+                      *Ratio:* {pivot['ratio']:.2f}
                     """)
             else:
                 st.info("No pivot operations performed yet.")
     
     # Optimal Solution Display
-    if hasattr(solver, 'solution') and solver.solution:
+    if hasattr(solver, 'is_optimal') and solver.is_optimal and hasattr(solver, 'solution') and solver.solution:
         st.markdown("---")
         st.markdown("### 🎯 Optimal Production Plan")
         
@@ -852,56 +878,6 @@ def main():
             st.metric("Avg. Profit/Box", f"${avg_profit:.2f}")
         
         st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Resource Utilization Analysis
-        st.markdown("### 📈 Resource Utilization Analysis")
-        
-        utilizations = solver.get_resource_utilization()
-        
-        cols = st.columns(3)
-        for i, util in enumerate(utilizations[:3]):
-            with cols[i]:
-                if util['utilization'] > 95:
-                    st.error(f"**{util['resource']}**\n{util['utilization']:.1f}% utilized")
-                elif util['utilization'] > 80:
-                    st.warning(f"**{util['resource']}**\n{util['utilization']:.1f}% utilized")
-                else:
-                    st.success(f"**{util['resource']}**\n{util['utilization']:.1f}% utilized")
-        
-        if len(utilizations) > 3:
-            cols = st.columns(3)
-            for i, util in enumerate(utilizations[3:6]):
-                with cols[i]:
-                    if util['utilization'] > 95:
-                        st.error(f"**{util['resource']}**\n{util['utilization']:.1f}% utilized")
-                    elif util['utilization'] > 80:
-                        st.warning(f"**{util['resource']}**\n{util['utilization']:.1f}% utilized")
-                    else:
-                        st.success(f"**{util['resource']}**\n{util['utilization']:.1f}% utilized")
-        
-        if len(utilizations) > 6:
-            st.markdown(f"**Storage:** {utilizations[6]['utilization']:.1f}% utilized")
-        
-        # Recommendations
-        st.markdown("### 💡 Recommendations")
-        
-        with st.expander("View Recommendations"):
-            st.markdown("""
-            **🚀 Immediate Actions:**
-            1. Adjust production to match optimal quantities
-            2. Focus on high-margin products
-            3. Monitor bottleneck resources closely
-            
-            **💰 Investment Priorities:**
-            1. Expand capacity of highly utilized resources (>95%)
-            2. Improve efficiency of production processes
-            3. Consider technology upgrades for automation
-            
-            **📊 Operational Improvements:**
-            1. Implement real-time production monitoring
-            2. Regular review of minimum production requirements
-            3. Cross-train staff for flexible resource allocation
-            """)
     
     # Variable Legend
     with st.expander("📚 Variable Legend"):

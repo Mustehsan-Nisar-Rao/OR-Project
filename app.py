@@ -339,33 +339,36 @@ class FreshDrinksSimplexSolver:
         
         return False
     
-    def perform_iteration(self, iteration):
-        """Perform one simplex iteration"""
-        if self.is_optimal:
-            return False, "Already at optimal solution"
+    def find_pivot_column(self):
+        """Find entering variable (most negative coefficient in objective row)"""
+        if self.tableau is None or len(self.tableau[-1]) == 0:
+            return -1
         
-        # Find entering variable (most negative reduced cost)
         obj_row = self.tableau[-1, :-1]
         
-        # Skip artificial variables
+        # Skip artificial variables in phase 1
         artificial_start = self.num_products + 7 + self.num_products
         for i in range(artificial_start, len(obj_row)):
-            if abs(obj_row[i]) > self.M/2:
-                obj_row[i] = float('inf')
+            if abs(obj_row[i]) > self.M/2:  # If it's an artificial variable coefficient
+                obj_row[i] = float('inf')  # Don't choose artificial variables
         
         min_val = np.min(obj_row)
-        pivot_col = np.argmin(obj_row)
         
-        if min_val >= -1e-10:
-            self.check_optimality()
-            return False, "Optimal solution reached"
+        if min_val >= -1e-10:  # Tolerance for numerical errors
+            return -1
         
-        # Find leaving variable using minimum ratio test
+        return np.argmin(obj_row)
+    
+    def find_pivot_row(self, pivot_col):
+        """Find leaving variable using minimum ratio test"""
+        if pivot_col < 0 or pivot_col >= self.tableau.shape[1]:
+            return -1
+        
         ratios = []
         for i in range(self.num_constraints):
-            if self.tableau[i, pivot_col] > 1e-10:
+            if self.tableau[i, pivot_col] > 1e-10:  # Positive
                 ratio = self.tableau[i, -1] / self.tableau[i, pivot_col]
-                if ratio >= 0:
+                if ratio >= 0:  # Only consider non-negative ratios
                     ratios.append(ratio)
                 else:
                     ratios.append(float('inf'))
@@ -373,37 +376,27 @@ class FreshDrinksSimplexSolver:
                 ratios.append(float('inf'))
         
         if all(r == float('inf') for r in ratios):
-            return False, "Problem is unbounded"
+            return -1
         
+        # Find minimum positive ratio
         min_ratio = float('inf')
-        pivot_row = -1
+        min_idx = -1
         for i, ratio in enumerate(ratios):
             if 0 <= ratio < min_ratio:
                 min_ratio = ratio
-                pivot_row = i
+                min_idx = i
         
-        if pivot_row == -1:
-            return False, "No valid pivot row found"
+        return min_idx
+    
+    def pivot(self, pivot_row, pivot_col):
+        """Perform pivot operation"""
+        if pivot_row < 0 or pivot_col < 0:
+            return False
         
-        # Store pivot info before performing pivot
-        pivot_info = {
-            'iteration': iteration,
-            'entering': self.var_names[pivot_col],
-            'leaving': self.basic_vars[pivot_row],
-            'pivot_element': self.tableau[pivot_row, pivot_col],
-            'pivot_row': pivot_row,
-            'pivot_col': pivot_col,
-            'ratio': min_ratio
-        }
-        
-        # Perform pivot operation
         pivot_element = self.tableau[pivot_row, pivot_col]
         
         if abs(pivot_element) < 1e-10:
-            return False, "Pivot element is zero"
-        
-        # Save state before pivot for display
-        self.save_iteration(iteration, f"Before pivot: {pivot_info['entering']} enters, {pivot_info['leaving']} leaves")
+            return False
         
         # Normalize pivot row
         self.tableau[pivot_row] = self.tableau[pivot_row] / pivot_element
@@ -419,37 +412,81 @@ class FreshDrinksSimplexSolver:
         if pivot_row < len(self.basic_vars):
             self.basic_vars[pivot_row] = self.var_names[pivot_col]
         
+        return True
+    
+    def perform_next_iteration(self):
+        """Perform one simplex iteration"""
+        if self.is_optimal:
+            return False, "Already at optimal solution"
+        
+        # Find entering variable
+        pivot_col = self.find_pivot_column()
+        
+        if pivot_col == -1:
+            self.check_optimality()
+            if self.is_optimal:
+                self.extract_solution()
+            return False, self.message
+        
+        # Find leaving variable
+        pivot_row = self.find_pivot_row(pivot_col)
+        
+        if pivot_row == -1:
+            return False, "Problem is unbounded"
+        
+        # Store pivot info
+        pivot_info = {
+            'iteration': len(self.pivot_history) + 1,
+            'entering': self.var_names[pivot_col],
+            'leaving': self.basic_vars[pivot_row],
+            'pivot_element': self.tableau[pivot_row, pivot_col],
+            'pivot_row': pivot_row,
+            'pivot_col': pivot_col
+        }
+        
+        # Save state before pivot
+        iteration_num = len(self.iterations_history)
+        self.save_iteration(iteration_num, f"Before iteration {pivot_info['iteration']}")
+        
+        # Perform pivot
+        success = self.pivot(pivot_row, pivot_col)
+        if not success:
+            return False, "Pivot operation failed"
+        
         # Add pivot info to history
         self.pivot_history.append(pivot_info)
         
-        # Check optimality after pivot
+        # Check optimality
         is_optimal = self.check_optimality()
         
         # Save state after pivot
         if is_optimal:
-            description = f"Optimal solution reached after pivot"
+            description = f"Optimal solution reached"
+            self.extract_solution()
         else:
-            description = f"After pivot: {pivot_info['entering']} in basis, {pivot_info['leaving']} out"
+            description = f"Iteration {pivot_info['iteration']} complete"
         
-        self.save_iteration(iteration + 0.5, description)
+        self.save_iteration(iteration_num + 0.5, description)
         
-        return True, f"Iteration {iteration} complete: {pivot_info['entering']} enters, {pivot_info['leaving']} leaves"
+        return True, f"Iteration {pivot_info['iteration']}: {pivot_info['entering']} enters, {pivot_info['leaving']} leaves"
     
-    def solve_complete(self):
+    def solve_all_iterations(self):
         """Solve the complete problem automatically"""
         self.build_problem()
         
         max_iterations = 50
-        for iteration in range(1, max_iterations + 1):
-            success, message = self.perform_iteration(iteration)
+        iteration_count = 0
+        
+        while not self.is_optimal and iteration_count < max_iterations:
+            iteration_count += 1
+            success, message = self.perform_next_iteration()
             if not success:
                 break
         
-        # Extract solution if optimal
         if self.is_optimal:
-            self.extract_solution()
-        
-        return self.is_optimal, self.message
+            return True, f"Optimal solution found in {iteration_count} iterations"
+        else:
+            return False, self.message
     
     def get_tableau_html(self, iteration_idx):
         """Generate HTML for tableau display"""
@@ -466,7 +503,7 @@ class FreshDrinksSimplexSolver:
         pivot_row = -1
         pivot_col = -1
         for pivot_info in self.pivot_history:
-            if pivot_info['iteration'] == int(iteration_data['iteration']):
+            if abs(iteration_data['iteration'] - pivot_info['iteration']) < 0.6:
                 pivot_row = pivot_info['pivot_row']
                 pivot_col = pivot_info['pivot_col']
                 break
@@ -479,15 +516,14 @@ class FreshDrinksSimplexSolver:
         
         # Show pivot info if available
         if pivot_row != -1:
-            pivot_info = next((p for p in self.pivot_history if p['iteration'] == int(iteration_data['iteration'])), None)
+            pivot_info = next((p for p in self.pivot_history if abs(iteration_data['iteration'] - p['iteration']) < 0.6), None)
             if pivot_info:
                 html += f"""
                 <div style="background-color: #FFF3E0; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
                     <strong>Pivot Operation:</strong> 
                     Entering: <span class="decision-var">{pivot_info['entering']}</span> | 
                     Leaving: <span class="basic-var">{pivot_info['leaving']}</span> | 
-                    Pivot Element: {pivot_info['pivot_element']:.4f} |
-                    Ratio: {pivot_info['ratio']:.2f}
+                    Pivot Element: {pivot_info['pivot_element']:.4f}
                 </div>
                 """
         
@@ -626,7 +662,6 @@ def main():
     # Initialize session state
     if 'solver' not in st.session_state:
         st.session_state.solver = FreshDrinksSimplexSolver()
-        st.session_state.solver.build_problem()
     
     if 'current_iteration' not in st.session_state:
         st.session_state.current_iteration = 0
@@ -683,7 +718,7 @@ def main():
         if st.button("🚀 Run Complete Solution", use_container_width=True):
             with st.spinner("Solving with Simplex Method..."):
                 # Solve the complete problem
-                success, message = solver.solve_complete()
+                success, message = solver.solve_all_iterations()  # Fixed method name
                 if success:
                     st.success(f"✅ {message}")
                 else:
@@ -706,8 +741,7 @@ def main():
         if st.button("⏭️ Perform Next Iteration", use_container_width=True):
             if not solver.is_optimal:
                 # Perform next iteration
-                iteration_num = len(solver.pivot_history) + 1
-                success, message = solver.perform_iteration(iteration_num)
+                success, message = solver.perform_next_iteration()  # Fixed method name
                 
                 if success:
                     st.success(f"✅ {message}")
@@ -728,7 +762,8 @@ def main():
                 st.rerun()
     
     # Display current iteration info
-    st.markdown(f"**Current Iteration:** {st.session_state.current_iteration} / {st.session_state.total_iterations - 1}")
+    if hasattr(solver, 'iterations_history') and len(solver.iterations_history) > 0:
+        st.markdown(f"**Current Iteration:** {st.session_state.current_iteration} / {len(solver.iterations_history) - 1}")
     
     # Status information
     if hasattr(solver, 'is_optimal') and solver.is_optimal:
@@ -762,7 +797,10 @@ def main():
             
             # Display selected tableau
             tableau_html = solver.get_tableau_html(st.session_state.current_iteration)
-            st.markdown(tableau_html, unsafe_allow_html=True)
+            if tableau_html:
+                st.markdown(tableau_html, unsafe_allow_html=True)
+            else:
+                st.info("No tableau available for this iteration.")
             
             # Navigation buttons
             col1, col2, col3 = st.columns([1, 2, 1])
@@ -789,10 +827,11 @@ def main():
             # Show all iterations in expanders
             for i in range(len(solver.iterations_history)):
                 iteration_data = solver.iterations_history[i]
-                with st.expander(f"Iteration {iteration_data['iteration']}: {iteration_data['description']}", 
+                with st.expander(f"Iteration {iteration_data['iteration']:.1f}: {iteration_data['description']}", 
                                expanded=(i == st.session_state.current_iteration)):
                     tableau_html = solver.get_tableau_html(i)
-                    st.markdown(tableau_html, unsafe_allow_html=True)
+                    if tableau_html:
+                        st.markdown(tableau_html, unsafe_allow_html=True)
                     
                     # Button to view this iteration
                     if st.button(f"View This Iteration", key=f"view_iter_{i}"):
@@ -810,8 +849,7 @@ def main():
                         'Iteration': pivot['iteration'],
                         'Entering Variable': pivot['entering'],
                         'Leaving Variable': pivot['leaving'],
-                        'Pivot Element': f"{pivot['pivot_element']:.4f}",
-                        'Ratio': f"{pivot['ratio']:.2f}"
+                        'Pivot Element': f"{pivot['pivot_element']:.4f}"
                     })
                 
                 pivot_df = pd.DataFrame(pivot_data)
@@ -823,8 +861,7 @@ def main():
                     - **Iteration {pivot['iteration']}:** 
                       *Entering:* {pivot['entering']}, 
                       *Leaving:* {pivot['leaving']}, 
-                      *Pivot Element:* {pivot['pivot_element']:.4f}, 
-                      *Ratio:* {pivot['ratio']:.2f}
+                      *Pivot Element:* {pivot['pivot_element']:.4f}
                     """)
             else:
                 st.info("No pivot operations performed yet.")
